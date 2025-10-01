@@ -1,0 +1,17 @@
+@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@keyframes matrix {
+  0% { background-position: 0 0; }
+  100% { background-position: 1000px 1000px; }
+}
+
+.animate-matrix {
+  background-image: url('/matrix-bg.gif'); /* optional gif */
+  background-repeat: repeat;
+  background-size: cover;
+  animation: matrix 60s linear infinite;
+}
+

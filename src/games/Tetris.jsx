@@ -11,18 +11,25 @@ export default function TetrisGame() {
   const [lines, setLines] = useState(0);
   const [level, setLevel] = useState(1);
 
+  // Expose game actions to button handlers via refs
+  const moveLeftRef = useRef(() => {});
+  const moveRightRef = useRef(() => {});
+  const rotateRef = useRef(() => {});
+  const softDropStepRef = useRef(() => {});
+  const hardDropRef = useRef(() => {});
+
   useEffect(() => {
     if (!gameStarted) return;
 
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
 
-    // ---- Dimensions in CELLS (classic 10x20; change cols=12 if you prefer)
+    // ---- Dimensions in CELLS
     const cols = 10;
     const rows = 20;
-    const cell = 24; // pixels per cell (controls visual size)
+    const cell = 24; // pixels per cell
 
-    // Set canvas size in pixels; draw only in pixel units
+    // Canvas exact pixels (fits most phones fine at 240x480)
     canvas.width = cols * cell;
     canvas.height = rows * cell;
 
@@ -144,7 +151,7 @@ export default function TetrisGame() {
       }
     };
 
-    // ---- Clear only the filled rows; return number of rows cleared (0..4)
+    // Clear filled rows; return number cleared
     const sweep = () => {
       let cleared = 0;
       for (let y = rows - 1; y >= 0; y--) {
@@ -153,7 +160,7 @@ export default function TetrisGame() {
           arena.splice(y, 1);
           arena.unshift(Array(cols).fill(0));
           cleared++;
-          y++; // re-check same index after unshift
+          y++;
         }
       }
       return cleared;
@@ -206,19 +213,19 @@ export default function TetrisGame() {
 
     const applyClearAndScore = (cleared) => {
       if (cleared <= 0) return;
-      const table = [0, 40, 100, 300, 1200]; // single/double/triple/tetris
+      const table = [0, 40, 100, 300, 1200];
       setScore(s => s + (table[cleared] || 0) * level);
       setLines(l => {
         const newLines = l + cleared;
         setLevel(lv => {
-          const target = Math.floor(newLines / 10) + 1; // level up every 10 lines
+          const target = Math.floor(newLines / 10) + 1; // level up every 10
           return target > lv ? target : lv;
         });
         return newLines;
       });
     };
 
-    const drop = () => {
+    const stepDrop = () => {
       player.pos.y++;
       if (collide(arena, player)) {
         player.pos.y--;
@@ -227,6 +234,16 @@ export default function TetrisGame() {
         applyClearAndScore(cleared);
         playerReset();
       }
+      dropCounter = 0;
+    };
+
+    const hardDrop = () => {
+      while (!collide(arena, player)) player.pos.y++;
+      player.pos.y--;
+      merge(arena, player);
+      const cleared = sweep();
+      applyClearAndScore(cleared);
+      playerReset();
       dropCounter = 0;
     };
 
@@ -243,34 +260,32 @@ export default function TetrisGame() {
       last = t;
 
       dropCounter += dt * (soft ? 3 : 1); // soft drop ~3x faster
-      if (dropCounter >= intervalForLevel()) drop();
+      if (dropCounter >= intervalForLevel()) stepDrop();
 
       render();
       animationRef.current = requestAnimationFrame(loop);
     };
 
-    // Controls
+    // Keyboard Controls (desktop)
     const onKeyDown = (e) => {
       if (!gameStarted) return;
       if (e.code === 'ArrowLeft') move(-1);
       else if (e.code === 'ArrowRight') move(1);
       else if (e.code === 'ArrowUp') playerRotate();
-      else if (e.code === 'ArrowDown') { soft = true; drop(); }
-      else if (e.code === 'Space') {
-        // Hard drop
-        while (!collide(arena, player)) player.pos.y++;
-        player.pos.y--;
-        merge(arena, player);
-        const cleared = sweep();
-        applyClearAndScore(cleared);
-        playerReset();
-        dropCounter = 0;
-      }
+      else if (e.code === 'ArrowDown') { soft = true; stepDrop(); }
+      else if (e.code === 'Space') hardDrop();
     };
     const onKeyUp = (e) => { if (e.code === 'ArrowDown') soft = false; };
 
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+
+    // Expose actions to on-screen buttons
+    moveLeftRef.current = () => move(-1);
+    moveRightRef.current = () => move(1);
+    rotateRef.current = () => playerRotate();
+    softDropStepRef.current = () => stepDrop();
+    hardDropRef.current = () => hardDrop();
 
     // Start
     playerReset();
@@ -282,7 +297,7 @@ export default function TetrisGame() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [gameStarted, level]); // rebind timing when level changes
+  }, [gameStarted, level]);
 
   const startGame = () => {
     setScore(0);
@@ -291,6 +306,27 @@ export default function TetrisGame() {
     setGameOver(false);
     setGameStarted(true);
   };
+
+  // ----- Mobile / Touch controls (hold-to-repeat) -----
+  const holdTimerRef = useRef(null);
+
+  const startHold = (fn, repeat = false, interval = 120) => (e) => {
+    e.preventDefault();
+    fn();
+    if (repeat) {
+      clearInterval(holdTimerRef.current);
+      holdTimerRef.current = setInterval(() => fn(), interval);
+    }
+  };
+  const endHold = () => {
+    clearInterval(holdTimerRef.current);
+    holdTimerRef.current = null;
+  };
+
+  // Buttons: use pointer events (work for mouse + touch)
+  const btnClass =
+    "px-4 py-3 rounded-xl border border-green-600 text-green-200 bg-black/50 " +
+    "active:scale-95 hover:border-green-400 transition select-none";
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[80vh] px-4">
@@ -311,8 +347,10 @@ export default function TetrisGame() {
         </button>
       )}
 
-      <div className="p-4 bg-black rounded-xl shadow-inner ring-2 ring-green-700">
-        {/* width/height set by JS for perfect fit */}
+      <div
+        className="p-4 bg-black rounded-xl shadow-inner ring-2 ring-green-700"
+        style={{ touchAction: 'none' }} // prevent scrolling while playing
+      >
         <canvas
           ref={canvasRef}
           className={`bg-black rounded-md shadow-md border-2 border-green-600 ${
@@ -321,12 +359,65 @@ export default function TetrisGame() {
         />
       </div>
 
+      {/* On-screen controls (shown always; harmless on desktop) */}
+      <div className="mt-4 grid grid-cols-3 gap-3 w-full max-w-xs">
+        <button
+          className={btnClass}
+          onPointerDown={startHold(() => moveLeftRef.current(), true)}
+          onPointerUp={endHold}
+          onPointerCancel={endHold}
+          onPointerLeave={endHold}
+        >
+          ◀
+        </button>
+
+        <button
+          className={btnClass}
+          onPointerDown={startHold(() => rotateRef.current(), false)}
+          onPointerUp={endHold}
+          onPointerCancel={endHold}
+          onPointerLeave={endHold}
+        >
+          ⟳
+        </button>
+
+        <button
+          className={btnClass}
+          onPointerDown={startHold(() => moveRightRef.current(), true)}
+          onPointerUp={endHold}
+          onPointerCancel={endHold}
+          onPointerLeave={endHold}
+        >
+          ▶
+        </button>
+
+        <button
+          className={btnClass + " col-span-2"}
+          onPointerDown={startHold(() => softDropStepRef.current(), true, 90)}
+          onPointerUp={endHold}
+          onPointerCancel={endHold}
+          onPointerLeave={endHold}
+        >
+          ⬇ Soft Drop
+        </button>
+
+        <button
+          className={btnClass}
+          onPointerDown={startHold(() => hardDropRef.current(), false)}
+          onPointerUp={endHold}
+          onPointerCancel={endHold}
+          onPointerLeave={endHold}
+        >
+          ⤓ Hard
+        </button>
+      </div>
+
       {gameOver && (
         <p className="text-red-400 mt-4 text-xl font-semibold">Game Over 💥</p>
       )}
 
-      <p className="mt-4 text-sm text-green-300 opacity-80">
-        Controls: ← → move · ↑ rotate · ↓ soft drop · Space hard drop
+      <p className="mt-3 text-xs text-green-300 opacity-80">
+        Desktop: ← → move · ↑ rotate · ↓ soft drop · Space hard drop
       </p>
     </div>
   );
